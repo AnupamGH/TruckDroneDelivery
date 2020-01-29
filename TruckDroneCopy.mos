@@ -1,0 +1,124 @@
+
+model TruckDrone
+uses "mmsheet","mmxprs","mmsvg" !gain access to the Xpress-Optimizer solver
+
+ parameters
+  Excel_InputFile = "OrdersData_20.xlsx"
+ end-parameters
+
+!sample declarations section
+declarations
+L = 1..21	!launching nodes for trucks and drones
+R = 2..22	!returning node for trucks and drones
+N = 2..21	!Customer nodes/locations
+A = 1..22	!all nodes
+k = 3	!number of drones
+
+ORDERID:array(A) of string
+La:array(A) of integer
+Lo:array(A) of integer
+EUC_DIST: array(A,A) of integer  ! Distance between customer locations
+
+X:array(A,A) of mpvar
+Y:array(A,A) of mpvar
+lambda:array(A) of mpvar
+
+end-declarations
+
+ forall(i in A, j in A)
+ 	X(i,j) is_binary
+
+ forall(i in A, j in A)
+ 	Y(i,j) is_binary
+
+ forall(i in A)
+ 	lambda(i) is_integer
+
+!Read data from excel
+initializations from "mmsheet.xlsx:"+Excel_InputFile
+	[ORDERID,La,Lo] as "skiph;[Sheet1$A:D]"
+end-initializations
+
+!Build Euclidean matrix
+forall(i in A,j in A) do
+  	EUC_DIST(i,j):= round(sqrt((La(i)-La(j))^2 + (Lo(i)-Lo(j))^2))
+end-do
+
+!print Euclidean matrix
+forall(i in A) do
+	forall(j in A) do
+  		write(EUC_DIST(i,j),' ')
+	end-do
+	writeln('')
+end-do
+
+!objective
+obj:= sum(i in L,j in R)10*X(i,j)*EUC_DIST(i,j) + sum(i in N,j in N)6*Y(i,j)*EUC_DIST(i,j)
+
+!truck must start and end at a depot
+sum(j in N)X(1,j) = 1
+sum(j in N)X(j,getsize(A)) = 1
+
+!each customer location must be visited once
+forall(j in N)(sum(i in L|i<>j)X(i,j) + sum(i in N|i<>j)Y(i,j) = 1)
+
+!position of node constraint
+lambda(1) = 1
+lambda(getsize(A)) = getsize(A)
+
+!subtour elimination
+forall(i in L,j in R|i<>j) lambda(j) >= lambda(i) + 1 - (getsize(A)+1)*(1-X(i,j))
+
+!if truck comes to j it must depart from j
+forall(j in N)sum(i in L|i<>j)X(i,j) = sum(l in R|l<>j)X(j,l)
+
+!associate drone delivery to truck route
+forall(i in N,j in N|i<>j)Y(i,j) <= sum(l in L|l<>i)X(l,i)
+
+!upto K drones can be used at a location
+!forall(i in L) do
+	forall(j in N) do
+			sum(l in N|l<>j)Y(j,l) <= k
+	end-do
+!end-do
+
+minimize(obj)
+forall(i in A , j in A | getsol(X(i,j)) > 0) do
+	writeln('X(',i,',',j,') = ',getsol(X(i,j)))
+end-do
+
+forall(i in A , j in A | getsol(Y(i,j)) > 0) do
+	writeln('Y(',i,',',j,') = ',getsol(Y(i,j)))
+end-do
+
+!visualization of graph
+svgerase
+svgaddgroup("g1", "", SVG_BLUE)
+ svgaddtext(1,99, "Truck Route")
+svgaddgroup("g2", "", SVG_RED)
+ svgaddtext(1,94, "Drone Route")
+ svgaddgroup("g3", "", SVG_BLACK)
+ svgaddtext(1,89, "Scale - 1:5")
+svgshowgraphaxes(true)
+
+svgsetgraphlabels("Latitude","Longitude")
+
+forall(i in L) do
+	forall(j in R) do
+		if(getsol(X(i,j)) > 0) then
+			svgaddarrow("g1",La(i), Lo(i), La(j), Lo(j))
+		forall(l in N|l<>j)
+			if(getsol(Y(j,l)) > 0) then
+			svgaddarrow("g2",La(j), Lo(j), La(l), Lo(l))
+			end-if
+		end-if
+	end-do
+end-do
+
+svgsetgraphscale(5)
+
+svgrefresh
+svgwaitclose("Close browser window to terminate model execution.", 1)
+writeln("Begin running model")
+writeln("Optimal cost is ",getobjval)
+end-model
